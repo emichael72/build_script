@@ -1,0 +1,17 @@
+    {
+        "app_source_path"           : "$trunk/sources/imc/zephyr/apps/imc_init_app/",
+        "cmake_template_file"       : "toolchain_template.cmake",
+        "source_nvm_file_name"      : "$trunk/sources/imc/nvm-generator/Simics_10003/nvm-image_10003.bin",
+        "destination_nvm_file_name" : "$trunk/sources/imc/nvm-generator/Simics_10003/nvm-image_10003_eitan.bin",
+        "nvm_auto_inject"           : true,
+        "build_target"              : "SiMics",
+        "build_type"                : "debug",
+        "no_pre_clean"              : false,
+        "skip_ft_id"                : false,
+        "start_fresh"               : false,
+        "clean_zephyr"              : false,
+        "script_show_debug"         : false,
+        "script_chatty"             : false,
+        "clear_logs"                : true,
+        "make_zephyr_only"          : true
+    }
