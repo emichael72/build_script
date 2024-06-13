@@ -28,11 +28,11 @@ sudo dnf install jq
 
 * Full build:
 
-  ![Full build](https://raw.githubusercontent.com/emichael72/build_script/main/art/full.png)
+  ![Full build](https://github.com/emichael72/build_script/blob/main/art/full.png?raw=true)
 
 * Setting `make_zephyr_only` to `true` will quickly build only the Zephyr kernel section of the project.
 
-  ![Quick Build](https://raw.githubusercontent.com/emichael72/build_script/main/art/fast.png)
+  ![Quick Build](https://github.com/emichael72/build_script/blob/main/art/fast.png?raw=true)
 
 * Setting `nvm_auto_inject` to `true` will automatically generate an NVM using the compiled Zephyr binary.
 
