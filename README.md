@@ -18,6 +18,7 @@ This repo hold a modified version of the IMC application build script, following
 
 7. **Inline Doxygen:** Some may consider it a nice-to-have feature, while others, like myself, view it as an absolute necessity.
 
+8. **OpenAI Integration:** added an option retrive insights from OpenAI whne we hit an error.
    
 
 ## Usage.
@@ -28,11 +29,11 @@ Make sure you have the JSON parsing utility:
 sudo dnf install jq
 ```
 
-1. Back up the `mev_imc_build_app.sh` script and copy `test.json`, `toolchain_template.cmake`, and the `mev_imc_build_app.sh` script to the target path, currently located at `/home/emichael/mgv_trunk/sources/imc/zephyr`."
+1. Back up the `mev_imc_build_app.sh` script and copy `toolbox.sh`, `default.json`, `ai_insights.py`, `toolchain_template.cmake` and the `mev_imc_build_app.sh` script to the target path, currently located at `/home/emichael/mgv_trunk/sources/imc/zephyr`."
 
 2. Edit `test.json` to reflect your specific configuration. 
 
-3. Execute `./mev_imc_build_app.sh test.json -j`
+3. Execute `./mev_imc_build_app.sh default.json -j`
 
    
 

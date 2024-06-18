@@ -13,5 +13,6 @@
         "script_show_debug"         : false,
         "script_chatty"             : false,
         "clear_logs"                : true,
-        "make_zephyr_only"          : true
+        "make_zephyr_only"          : false,
+        "ai_assisted_error_info"    : true
     }
