@@ -56,7 +56,7 @@ def print_chatgpt_insights(error_message, file_content):
     """
 
     prompt = f"""
-    1. Please provide a concise proposed fix for the function responsible the failure.\n
+    1. Please provide a proposed code to fix the reported warning and errors.\n
     2. Focus only on the function that triggered the error.\n
     3. Use up to 300 tokens and wrap your code at 80 columns.\n
     4. Add a fix description, function name if applicable, and the line of code where 
@@ -82,7 +82,7 @@ def print_chatgpt_insights(error_message, file_content):
             max_tokens=300,  # Increase this to get more detailed responses
             n=1,
             stop=None,
-            temperature=0.8,
+            temperature=1.0,
         )
     except openai.error.RateLimitError as e:
         print ("Rate limit exceeded. Please try again later.")

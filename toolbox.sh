@@ -1,5 +1,5 @@
-#!/bin/bash
-# tool_box.sh
+
+# toolbox.sh
 
 # ------------------------------------------------------------------------------
 # Script Name:    tool_box.sh
@@ -14,6 +14,7 @@
 toolbox_version="0.1" # Helps to keep track of this glory.
 toolbox_allow_debug=0 # Enable / disable the use of 'toolbox_d_printf'
 toolbox_terminal_tmi=0 # If true (1_) the step will dump everything to the terminal
+toolbox_script_base_path=""
 
 ##
 # @brief Print text with multiple colors in the same line using ANSI color codes.
@@ -313,45 +314,6 @@ toolbox_clean_ansi_escape_codes() {
 }
 
 
-##
-# @brief Extracts the filename that caused the GCC compilation error from the 
-#        provided GCC output.
-# This function processes GCC compilation output assumed not to have ANSI escape 
-# codes, and extracts the filename of the source file that caused the 
-# compilation error. It returns an empty string if no error is found or if the 
-# extraction fails.
-# @param gcc_output The string containing GCC console output.
-# @return The filename with its path if found, or an empty string if an error 
-# occurs or file doesn't exist.
-#
-
-toolbox_prase_gcc_output() {
-
-    
-    local gcc_output="$1"
-
-    # Ensure gcc_output is a single line (remove newlines and carriage returns)
-    gcc_output=$(echo "$gcc_output" | tr -d '\n' | tr -d '\r')
-
-    # Search for the pattern ":num:num: error:"
-    if [[ $gcc_output =~ ([^:]*):([0-9]+):([0-9]+):\ error: ]]; then
-        local file_path="${BASH_REMATCH[1]}"
-
-        # Check if the file path has a valid extension
-        if [[ $file_path =~ \.([ch])$|\.s$ ]]; then
-            # Final check if the file exists
-            if [[ -f "$file_path" ]]; then
-                echo "$file_path"
-                return 0
-            fi
-        fi
-    fi
-
-    # Return empty string on error.
-    echo ""
-    return 1
-}
-
 ## @brief Handles errors by checking the provided step index, log file name, and return value.
 #         If AI-assisted error handling is enabled in the JSON configuration, it processes the 
 #         log file content.
@@ -396,16 +358,22 @@ toolbox_error_handler() {
     if [ "$ai_assisted" -eq 0 ]; then
          return $step_return_value # Not enabled
     fi
-
-    # Read and clean the content of the log file into a variable
+ 
+      # Read and clean the content of the log file into a variable
     gcc_error_message=$(toolbox_read_file_to_variable "$step_log_file_name" 1)
     status=$?
     if [[ $status -eq 1 ]]; then
         return $step_return_value # Error: Problematic Log file.s
     fi
     
-    # Extract the file that triggered the error
-    bad_source_file_name=$(toolbox_prase_gcc_output "$gcc_error_message")
+    # Use js to handle that impossible gcc output!
+    node_script="$toolbox_script_base_path/gcc_output_parser.js"
+
+    # Run the Node.js script and capture the JSON output
+    json_output=$(node "$node_script" "$step_log_file_name")
+
+    # Extract the filename using jq
+    bad_source_file_name=$(echo "$json_output" | jq -r '.[0].filename')
     
     # Verify that the file exists and read its content into bad_source_file_content
     if [ -n "$bad_source_file_name" ]; then
@@ -425,7 +393,7 @@ toolbox_error_handler() {
     # Call the Python script
     toolbox_c_printf "\nCompilation " RED "error" DEFAULT " found in '" CYAN "$bad_source_file_name'" DEFAULT "\n"
     toolbox_c_printf "Requesting AI assistance....\n\n\n"
-    insights=$(/usr/bin/python3 $script_base_path/ai_insights.py "$gcc_error_message" "$bad_source_file_content" "$ai_assist_timeout")
+    insights=$(/usr/bin/python3 $toolbox_script_base_path/ai_insights.py "$gcc_error_message" "$bad_source_file_content" "$ai_assist_timeout")
     echo "$insights"
 
     return $step_return_value
@@ -664,6 +632,6 @@ toolbox_set_options() {
     # Set global variables
     toolbox_allow_debug="$allow_debug"
     toolbox_terminal_tmi="$terminal_tmi"
-
+    toolbox_script_base_path=$(pwd)
     return 0
 }
