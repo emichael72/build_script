@@ -31,7 +31,7 @@ sudo dnf install jq
 
 1. Back up the `mev_imc_build_app.sh` script and copy `toolbox.sh`, `default.json`, `ai_insights.py`, `toolchain_template.cmake` and the `mev_imc_build_app.sh` script to the target path, currently located at `/home/emichael/mgv_trunk/sources/imc/zephyr`."
 
-2. Edit `test.json` to reflect your specific configuration. 
+2. Edit `default.json` to reflect your specific configuration. 
 
 3. Execute `./mev_imc_build_app.sh default.json -j`
 
