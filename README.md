@@ -27,13 +27,13 @@ Make sure you have the JSON parsing utility:
 
 ```
 sudo dnf install jq
+Optional 'npm' for executing AI relatred JavaScripts.
 ```
 
-1. Back up the `mev_imc_build_app.sh` script and copy `toolbox.sh`, `default.json`, `ai_insights.py`, `toolchain_template.cmake` and the `mev_imc_build_app.sh` script to the target path, currently located at `/home/emichael/mgv_trunk/sources/imc/zephyr`."
-
-2. Edit `default.json` to reflect your specific configuration. 
-
-3. Execute `./mev_imc_build_app.sh default.json -j`
+1. Create a directiry in your work path under sources named 'build' and copy 'resources' from this repo to 'sources/build'.
+2. Copy 'imc_build.sh' and 'default.json' from this repo to your 'sources/build'.
+3. Edit `default.json` to reflect your specific configuration. 
+4. Execute `./imc_build.sh default.json -j`
 
    
 
