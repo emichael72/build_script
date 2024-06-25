@@ -1,9 +1,10 @@
     {
         "app_source_path"           : "$trunk/sources/imc/zephyr/apps/imc_init_app/",
-        "cmake_template_file"       : "toolchain_template.cmake",
-        "source_nvm_file_name"      : "$trunk/sources/imc/nvm-generator/Simics_10003/nvm-image_10003.bin",
-        "destination_nvm_file_name" : "$trunk/sources/imc/nvm-generator/Simics_10003/nvm-image_10003_eitan.bin",
-        "nvm_auto_inject"           : true,
+        "cmake_template_file"       : "resources/toolchain_template.cmake",
+        "image_inject_script"       : "resources/mgv_imc_image_injection.py",
+        "image_inject_src_nvm"      : "$trunk/sources/imc/nvm-generator/Simics_10003/nvm-image_10003.bin",
+        "image_inject_dst_nvm"      : "$trunk/sources/imc/nvm-generator/Simics_10003/nvm-image_10003_eitan.bin",
+        "image_inject_exec"         : true,
         "build_target"              : "SiMics",
         "build_type"                : "debug",
         "no_pre_clean"              : false,
@@ -13,6 +14,6 @@
         "script_show_debug"         : false,
         "script_chatty"             : false,
         "clear_logs"                : true,
-        "make_zephyr_only"          : true,
-        "ai_assisted_error_info"    : true
+        "make_zephyr_only"          : false,
+        "ai_assisted_error_info"    : false
     }

@@ -2,10 +2,10 @@
 # mev_imc_build_app.sh
 
 # ------------------------------------------------------------------------------
-# Script Name:    mev_imc_build_app.sh
+# Script Name:    imc_build.sh
 # Description:    IMC Application build script.
-# Version:        0.1
-# Usage:          ./mev_imc_build_app.sh -?
+# Version:        0.2
+# Usage:          ./imc_build.sh -?
 # Copyright:      (C) 2018 - 2024 Intel Corporation.
 # License:        2018 - 2024 Intel Corporation.
 # ------------------------------------------------------------------------------
@@ -35,10 +35,11 @@
 : '
     {
         "app_source_path"           : "$trunk/sources/imc/zephyr/apps/imc_init_app/",
-        "cmake_template_file"       : "toolchain_template.cmake",
-        "source_nvm_file_name"      : "$trunk/sources/imc/nvm-generator/Simics_10003/nvm-image_10003.bin",
-        "destination_nvm_file_name" : "$trunk/sources/imc/nvm-generator/Simics_10003/nvm-image_10003_eitan.bin",
-        "nvm_auto_inject"           : true,
+        "cmake_template_file"       : "resources/toolchain_template.cmake",
+        "image_inject_script"       : "resources/mgv_imc_image_injection.py",
+        "image_inject_src_nvm"      : "$trunk/sources/imc/nvm-generator/Simics_10003/nvm-image_10003.bin",
+        "image_inject_dst_nvm"      : "$trunk/sources/imc/nvm-generator/Simics_10003/nvm-image_10003_eitan.bin",
+        "image_inject_exec"         : true,
         "build_target"              : "SiMics",
         "build_type"                : "debug",
         "no_pre_clean"              : false,
@@ -55,10 +56,10 @@
 '
 
 # Have the swissknife with at all times.
-source ./toolbox.sh
+source ./resources/toolbox.sh
 
 # Script global variables
-script_version="0.1" # Helps to keep track of this glory.
+script_version="0.2" # Helps to keep track of this glory.
 
 # Bit mask values for allowing any combination of input arguments
 BUILD_OPT_SIMICS=$((0x01))              # Build for Simics
@@ -76,8 +77,7 @@ BUILD_OPT_CLEAR_LOGS=$((0x400))         # Clear step logs
 # Variable to hold selected arguments along with few defaults.
 script_args=$((script_args | BUILD_OPT_SIMICS | BUILD_OPT_CLEAR_LOGS))
 
-export_config_script_name="export_kernel_build_config.sh"
-toolchain_template_file="toolchain_template.cmake" # Template being use in-conjunction with CMake.
+
 toolchain_cmake_file="toolchain.cmake" # The CMake file we'd be using.
 log_files_path="logs" # Where we store our run-time per step logs.
 compiled_binary_name="zephyr.bin" # Expected compilation product upon success.
@@ -88,6 +88,7 @@ json_file_name="" # The JSON file name in the case we're using JSON
 source_nvm_file_name="" # The source NVM file (untouched by this script).
 destination_nvm_file_name="" # The updated NVM file name we're about to crate using 'inject'
 script_base_path="" # Script base execution path 
+image_inject_script="" # Script used for injecting the Zephyr section into the NVM.
 ai_assisted_error_info=0 # Let the devil assist you
 ai_assisted_timeout=10 # Timeout (seconds) for the OpanAI query.
 build_path="" # Target build folder
@@ -96,18 +97,17 @@ build_path="" # Target build folder
 declare -a steps=(
     # Step description                      Execution operation                                                           Step #
     #---------------------------------------------------------------------------------------------------------------------------
-    "'Export kernel build configuration'    '\${export_config_script_name} \${build_path}'"                                  # 0
-    "'Generate CMake tool-chain file'       'cmake_generate_toolchain_file \${toolchain_template_file}'"                     # 1
-    "'Configure CMake'                      'configure_cmake'"                                                               # 2
-    "'Quick Zephyr make'                    'make'"                                                                          # 3
-    "'Generating ID'                        'python3 \${IMC_FT_TOOLS_DIR}/ft_id_generator.py --path . -r 4'"                 # 4
-    "'Building MEV Infra lib'               'make -C \"\$MEV_INFRA_PATH\" -j\$(nproc)'"                                      # 5
-    "'Building MEV-TS lib'                  'make -C \"\$MEV_LIBS_PATH\" -j\$(nproc)'"                                       # 6
-    "'Building Infra Common lib'            'make -C \"\$IMC_INFRA_COMMON_LINUX_DIR\" -j\$(nproc)'"                          # 7
-    "'Quick Zephyr clean'                   'make clean'"                                                                    # 8
-    "'Building Zephyr'                      'cmake --build \"\${build_path}\" -j\$(nproc)'"                                  # 9
-    "'Quick Zephyr link'                    'make -f CMakeFiles/linker.dir/build.make'"                                      # 10
-    "'NVM file Inject'                      'python3 mgv_imc_image_injection.py -nvm \${source_nvm_file_name} -z \${compiled_binary_name} -o \${destination_nvm_file_name}'" # 11
+    "'Generate CMake tool-chain file'       'cmake_generate_toolchain_file \${toolchain_template_file}'"                     # 0
+    "'Configure CMake'                      'configure_cmake'"                                                               # 1
+    "'Quick Zephyr make'                    'make'"                                                                          # 2
+    "'Generating ID'                        'python3 \${IMC_FT_TOOLS_DIR}/ft_id_generator.py --path . -r 4'"                 # 3
+    "'Building MEV Infra lib'               'make -C \"\$MEV_INFRA_PATH\" -j\$(nproc)'"                                      # 4
+    "'Building MEV-TS lib'                  'make -C \"\$MEV_LIBS_PATH\" -j\$(nproc)'"                                       # 5
+    "'Building Infra Common lib'            'make -C \"\$IMC_INFRA_COMMON_LINUX_DIR\" -j\$(nproc)'"                          # 6
+    "'Quick Zephyr clean'                   'make clean'"                                                                    # 7
+    "'Building Zephyr'                      'cmake --build \"\${build_path}\" -j\$(nproc)'"                                  # 8
+    "'Quick Zephyr link'                    'make -f CMakeFiles/linker.dir/build.make'"                                      # 9
+    "'NVM file Inject'                      'python3 \${image_inject_script} -nvm \${source_nvm_file_name} -z \${compiled_binary_name} -o \${destination_nvm_file_name}'" # 10
 )
 
 
@@ -497,17 +497,21 @@ nvm_auto_inject() {
         return 0 # Not using JSON, this firewater is not supported.
     fi
 
+    # Get the script that can do the inject.
+    value=$(jq -r '.image_inject_script' "$json_file_name")
+    image_inject_script=$(eval echo "$value") # Expand since this is a path.
+
     # Boolean : are we set to inject our binary into the NVM?
-    toolbox_extract_json_arg $json_file_name "nvm_auto_inject" "true" "false"
+    toolbox_extract_json_arg $json_file_name "image_inject_exec" "true" "false"
     if [[ $? -eq 1 ]]; then
         return 0 # Auto inject is not enabled
     fi
 
     # Get the NVM file names from the JSON file.
-    value=$(jq -r '.source_nvm_file_name' "$json_file_name")
+    value=$(jq -r '.image_inject_src_nvm' "$json_file_name")
     source_nvm_file_name=$(eval echo "$value") # Expand since this is a path.
 
-    value=$(jq -r '.destination_nvm_file_name' "$json_file_name")
+    value=$(jq -r '.image_inject_dst_nvm' "$json_file_name")
     destination_nvm_file_name=$(eval echo "$value") # Expand since this is a path.
 
     # Basic sanity
@@ -517,7 +521,7 @@ nvm_auto_inject() {
     fi
 
     # Fire inject step and return error if we had any.
-    toolbox_exec_step steps 11 || { return $?; }    # # 11: Call inject
+    toolbox_exec_step steps 10 || { return $?; }    # # 11: Call inject
     
     # Log the location of the new NVM file (absolute) 
     absolute_path=$(toolbox_to_absolute_path "$destination_nvm_file_name")
@@ -588,18 +592,18 @@ build_imc_app() {
 
         # Cal clean as needed
         if (( (script_args & BUILD_OPT_MAKE_CLEAN) != 0 )); then
-            toolbox_exec_step steps 8 || { return $?; }    # 8: Execute 'make clean'
+            toolbox_exec_step steps 7 || { return $?; }    # 8: Execute 'make clean'
             rm $compiled_binary_name > /dev/null 2>&1
         fi
 
-        toolbox_exec_step steps 3  || { return $?; }    # 3:  Quick Zephyr build using 'make'
-        toolbox_exec_step steps 10 || { return $?; }    # 10: Quick link Zephyr
+        toolbox_exec_step steps 2  || { return $?; }    # 2: Quick Zephyr build using 'make'
+        toolbox_exec_step steps 9  || { return $?; }    # 9: Quick link Zephyr
         return $?
     fi
 
     # Generate FT ID unless we're set to skip it
     if (( (script_args & BUILD_OPT_SKIP_FT_GENERATION) == 0 )); then
-        toolbox_exec_step steps 4 || { return $?; }   # 4: Generating ID
+        toolbox_exec_step steps 3 || { return $?; }   # 3: Generating ID
     fi
 
     # Check if the 'start fresh' bit is set, if so, silently attempt to
@@ -611,28 +615,27 @@ build_imc_app() {
     fi
 
     # Execute the step associated with CMake tool chain preparation.
-    toolbox_exec_step steps 0 || { return $?; }   # 0: Export kernel build configuration
-    toolbox_exec_step steps 1 || { return $?; }   # 1: Generate CMake tool-chain file
-    toolbox_exec_step steps 2 || { return $?; }   # 2: Configure CMake
+    toolbox_exec_step steps 0 || { return $?; }   # 0: Generate CMake tool-chain file
+    toolbox_exec_step steps 1 || { return $?; }   # 1: Configure CMake
 
     # Export BUILD_ROOT environment variable
     export BUILD_ROOT="${build_path}"
 
     # Execute the step associated with the compilation.
     # Each of the sub-projects has it's own step
-    toolbox_exec_step steps 5 || { return $?; }    # 5: Building MEV Infra lib
-    toolbox_exec_step steps 6 || { return $?; }    # 6: Building MEV-TS lib
-    toolbox_exec_step steps 7 || { return $?; }    # 7: Building Infra Common lib
+    toolbox_exec_step steps 4 || { return $?; }    # 4: Building MEV Infra lib
+    toolbox_exec_step steps 5 || { return $?; }    # 5: Building MEV-TS lib
+    toolbox_exec_step steps 6 || { return $?; }    # 6: Building Infra Common lib
 
     cd ${build_path}
 
     # Call 'make clean' if required
     if (( (script_args & BUILD_OPT_MAKE_CLEAN) != 0 )); then
-        toolbox_exec_step steps 8 || { return $?; }    # 8: Cleaning Zephyr
+        toolbox_exec_step steps 7 || { return $?; }    # 7: Cleaning Zephyr
     fi
 
     # Lastly, build the Zephyr kernel.
-    toolbox_exec_step steps 9 || { return $?; }    # 9: Building Zephyr
+    toolbox_exec_step steps 8 || { return $?; }    # 8: Building Zephyr
 
     return $?  # Return last status code
 }
