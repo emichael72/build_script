@@ -56,7 +56,7 @@
 '
 
 # Have the swissknife with at all times.
-source ./resources/toolbox.sh
+source ./resources/imc_toolbox.sh
 
 # Script global variables
 script_version="0.2" # Helps to keep track of this glory.
@@ -77,7 +77,7 @@ BUILD_OPT_CLEAR_LOGS=$((0x400))         # Clear step logs
 # Variable to hold selected arguments along with few defaults.
 script_args=$((script_args | BUILD_OPT_SIMICS | BUILD_OPT_CLEAR_LOGS))
 
-
+export_config_script_name="export_kernel_build_config.sh"
 toolchain_cmake_file="toolchain.cmake" # The CMake file we'd be using.
 log_files_path="logs" # Where we store our run-time per step logs.
 compiled_binary_name="zephyr.bin" # Expected compilation product upon success.
@@ -92,23 +92,6 @@ image_inject_script="" # Script used for injecting the Zephyr section into the N
 ai_assisted_error_info=0 # Let the devil assist you
 ai_assisted_timeout=10 # Timeout (seconds) for the OpanAI query.
 build_path="" # Target build folder
-
-# Script global execution step array.
-declare -a steps=(
-    # Step description                      Execution operation                                                           Step #
-    #---------------------------------------------------------------------------------------------------------------------------
-    "'Generate CMake tool-chain file'       'cmake_generate_toolchain_file \${toolchain_template_file}'"                     # 0
-    "'Configure CMake'                      'configure_cmake'"                                                               # 1
-    "'Quick Zephyr make'                    'make'"                                                                          # 2
-    "'Generating ID'                        'python3 \${IMC_FT_TOOLS_DIR}/ft_id_generator.py --path . -r 4'"                 # 3
-    "'Building MEV Infra lib'               'make -C \"\$MEV_INFRA_PATH\" -j\$(nproc)'"                                      # 4
-    "'Building MEV-TS lib'                  'make -C \"\$MEV_LIBS_PATH\" -j\$(nproc)'"                                       # 5
-    "'Building Infra Common lib'            'make -C \"\$IMC_INFRA_COMMON_LINUX_DIR\" -j\$(nproc)'"                          # 6
-    "'Quick Zephyr clean'                   'make clean'"                                                                    # 7
-    "'Building Zephyr'                      'cmake --build \"\${build_path}\" -j\$(nproc)'"                                  # 8
-    "'Quick Zephyr link'                    'make -f CMakeFiles/linker.dir/build.make'"                                      # 9
-    "'NVM file Inject'                      'python3 \${image_inject_script} -nvm \${source_nvm_file_name} -z \${compiled_binary_name} -o \${destination_nvm_file_name}'" # 10
-)
 
 
 ##
@@ -146,6 +129,9 @@ handle_arguments_json() {
 
     local json_file="$1"
     local value
+    local showe_debug=0
+    local chatty=0
+    local is_valid
 
     # Check if the JSON file exists
     if [[ ! -f "$json_file" ]]; then
@@ -163,15 +149,21 @@ handle_arguments_json() {
     json_file_name=$json_file 
 
     # Extract the arguments from the JSON
+    application_source_path=$(toolbox_json_element_to_absolute_path "$json_file" "app_source_path")
+    toolchain_template_file=$(toolbox_json_element_to_absolute_path "$json_file" "cmake_template_file")
+    steps_manager_script=$(toolbox_json_element_to_absolute_path "$json_file" "steps_manager_script")
+    steps_json_file=$(toolbox_json_element_to_absolute_path "$json_file" "steps_json_file")
 
-    value=$(jq -r '.app_source_path' "$json_file")
-    application_source_path=$(eval echo "$value") # Expand since this is a path.
+    # Use the python interface to make sure the JSON steps file is OK.
+    is_valid=$(python "$steps_manager_script" "validate_steps('$steps_json_file')")
+    if [ "$is_valid" -ne 0 ]; then
+        toolbox_c_printf RED "Error: " DEFAULT "JSON steps file " YELLOW $steps_json_file DEFAULT " not found or not validated.\n"
+        toolbox_c_printf "File: " YELLOW "${BASH_SOURCE[0]}" DEFAULT ", Line: ${BASH_LINENO[0]}\n\n"
+        exit 1
+    fi
 
-    value=$(jq -r '.cmake_template_file' "$json_file")
-    toolchain_template_file=$(eval echo "$value") # Expand since this a path.
-   
     # Build target could be either "Simics" or "Veloce" so:
-     toolbox_extract_json_arg $json_file "build_target" "Simics" "Veloce"
+    toolbox_extract_json_arg $json_file "build_target" "Simics" "Veloce"
     if [[ $? -eq 0 ]]; then
          script_args=$((script_args | BUILD_OPT_SIMICS))
     else
@@ -222,6 +214,19 @@ handle_arguments_json() {
         ai_assisted_error_info=1
     fi
 
+    # Update the toolbox based on what we got from the caller.
+    if (( (script_args & BUILD_OPT_SCRIPT_SHOW_DEBUG) != 0 )); then
+        showe_debug=1
+    fi
+
+    if (( (script_args & BUILD_OPT_SCRIPT_CHATTY) != 0 )); then
+        chatty=1
+    fi
+
+
+
+    toolbox_set_options $showe_debug $chatty $steps_manager_script $steps_json_file
+
 }
 
 ##
@@ -237,9 +242,6 @@ handle_arguments_json() {
 handle_arguments_console() {
 
     local numeric_val=0
-    local showe_debug=0
-    local chatty=0
-
     printf "\n"
 
     if [[ $# -lt 1 ]]; then
@@ -350,19 +352,6 @@ handle_arguments_console() {
         build_type="release"
     fi
 
-    # Normalize export config scrip name
-    export_config_script_name=$(toolbox_to_absolute_path "$export_config_script_name")
-
-    # Update the toolbox based on what we got from the caller.
-    if (( (script_args & BUILD_OPT_SCRIPT_SHOW_DEBUG) != 0 )); then
-        showe_debug=1
-    fi
-
-    if (( (script_args & BUILD_OPT_SCRIPT_CHATTY) != 0 )); then
-        chatty=1
-    fi
-    toolbox_set_options $showe_debug $chatty
-
     # Export few essential variables
     export BUILD_TYPE=${numeric_val}
     export PLATFORM=${build_platform}
@@ -384,7 +373,7 @@ handle_arguments_console() {
 cmake_generate_toolchain_file() {
 
     if [[ $# -ne 1 ]]; then
-      # @usage cmake_generate_toolchain_file <build_path> <template_path>
+      # @usage cmake_generate_toolchain_file <template_path>
       return 1
     fi
 
@@ -455,8 +444,6 @@ configure_cmake() {
     path_to_cc=$(which ${CROSS_COMPILE}gcc | sed 's:gcc::')
     oecmake_sitefile=
 
-    cd ${build_path}
-
     # Give the host tools precedence before the SDK host sysroot
     cmake \
         --log-level=ERROR \
@@ -521,7 +508,7 @@ nvm_auto_inject() {
     fi
 
     # Fire inject step and return error if we had any.
-    toolbox_exec_step steps 10 || { return $?; }    # # 11: Call inject
+    toolbox_exec_step 10 || { return $?; }    # # 10: Call inject
     
     # Log the location of the new NVM file (absolute) 
     absolute_path=$(toolbox_to_absolute_path "$destination_nvm_file_name")
@@ -544,32 +531,21 @@ nvm_auto_inject() {
 
 build_imc_app() {
 
-    toolbox_d_printf "Building: %s/%s" $build_platform $build_type
-    toolbox_d_printf "Template: %s" $toolchain_template_file
-
-    # Check if IMC_KERNEL_DIR is defined
-    if [[ -z "${IMC_KERNEL_DIR}" ]]; then
-        toolbox_c_printf RED "Error: IMC_KERNEL_DIR environment variable not defined.\n" \
-                 DEFAULT "Make sure to source the environment setup script.\n"
-        return 1
-    fi
-
-    # Check if SDKTARGETSYSROOT is defined
-    if [[ -z "${SDKTARGETSYSROOT}" ]]; then
-        toolbox_c_printf RED "Error: MEV-TS dedicated tool-chain is not in use.\n" \
-                 DEFAULT "Make sure to source the tool-chain environment setup script.\n"
-        return 1
-    fi
 
     # Required by child / other dependent scripts.
     export ZEPHYR_BASE=${IMC_KERNEL_DIR}
 
     # Construct the output build directory based on the selected platform and build type.
     build_path="${IMC_KERNEL_DIR}/build_$(basename ${application_source_path})_${build_platform}_${build_type}"
-    
+    export BUILD_ROOT="${build_path}"  # Export BUILD_ROOT environment variable
+
     # Adjust fer global variables to point to the now constructed target build path.
     log_files_path="${build_path}/$log_files_path"
     compiled_binary_name="${build_path}/zephyr/$compiled_binary_name"
+    
+    # Debug helpers
+    toolbox_d_printf "Building: %s/%s" $build_platform $build_type
+    toolbox_d_printf "Template: %s" $toolchain_template_file
     toolbox_d_printf "Build path: %s" $build_path 
 
     mkdir -p ${build_path} > /dev/null 2>&1 # Optimistic create the build path.
@@ -588,22 +564,21 @@ build_imc_app() {
     # If this is just a quick build based an exiting Makefile we can
     # do it right away end exit.
     if (( (script_args & BUILD_OPT_FAST_MAKE) != 0 )); then
-        cd ${build_path}
-
+       
         # Cal clean as needed
         if (( (script_args & BUILD_OPT_MAKE_CLEAN) != 0 )); then
-            toolbox_exec_step steps 7 || { return $?; }    # 8: Execute 'make clean'
+            toolbox_exec_step 7 || { return $?; }    # 8: Execute 'make clean'
             rm $compiled_binary_name > /dev/null 2>&1
         fi
 
-        toolbox_exec_step steps 2  || { return $?; }    # 2: Quick Zephyr build using 'make'
-        toolbox_exec_step steps 9  || { return $?; }    # 9: Quick link Zephyr
+        toolbox_exec_step 2  || { return $?; }    # 2: Quick Zephyr build using 'make'
+        toolbox_exec_step 9  || { return $?; }    # 9: Quick link Zephyr
         return $?
     fi
 
     # Generate FT ID unless we're set to skip it
     if (( (script_args & BUILD_OPT_SKIP_FT_GENERATION) == 0 )); then
-        toolbox_exec_step steps 3 || { return $?; }   # 3: Generating ID
+        toolbox_exec_step 3 || { return $?; }   # 3: Generating ID
     fi
 
     # Check if the 'start fresh' bit is set, if so, silently attempt to
@@ -614,28 +589,25 @@ build_imc_app() {
         mkdir -p ${build_path} > /dev/null 2>&1
     fi
 
-    # Execute the step associated with CMake tool chain preparation.
-    toolbox_exec_step steps 0 || { return $?; }   # 0: Generate CMake tool-chain file
-    toolbox_exec_step steps 1 || { return $?; }   # 1: Configure CMake
+    toolbox_exec_step 11 || { return $?; }   # Export kernel build configuration
 
-    # Export BUILD_ROOT environment variable
-    export BUILD_ROOT="${build_path}"
+    # Execute the step associated with CMake tool chain preparation.
+    toolbox_exec_step 0 || { return $?; }    # 0: Generate CMake tool-chain file
+    toolbox_exec_step 1 || { return $?; }    # 1: Configure CMake
 
     # Execute the step associated with the compilation.
     # Each of the sub-projects has it's own step
-    toolbox_exec_step steps 4 || { return $?; }    # 4: Building MEV Infra lib
-    toolbox_exec_step steps 5 || { return $?; }    # 5: Building MEV-TS lib
-    toolbox_exec_step steps 6 || { return $?; }    # 6: Building Infra Common lib
-
-    cd ${build_path}
+    toolbox_exec_step 4 || { return $?; }    # 4: Building MEV Infra lib
+    toolbox_exec_step 5 || { return $?; }    # 5: Building MEV-TS lib
+    toolbox_exec_step 6 || { return $?; }    # 6: Building Infra Common lib
 
     # Call 'make clean' if required
     if (( (script_args & BUILD_OPT_MAKE_CLEAN) != 0 )); then
-        toolbox_exec_step steps 7 || { return $?; }    # 7: Cleaning Zephyr
+        toolbox_exec_step 7 || { return $?; }    # 7: Cleaning Zephyr
     fi
 
     # Lastly, build the Zephyr kernel.
-    toolbox_exec_step steps 8 || { return $?; }    # 8: Building Zephyr
+    toolbox_exec_step 8 || { return $?; }    # 8: Building Zephyr
 
     return $?  # Return last status code
 }
@@ -653,7 +625,7 @@ main() {
 
     # Store the current directory
     script_base_path=$(pwd)
-    
+
     # Capture the start time
     start_time=$(date +%s)
 
@@ -665,9 +637,15 @@ main() {
     fi
 
     # Greetings
-    # clear
+    clear
     toolbox_c_printf "\nIMC Application builder (version " CYAN "$script_version)\n"
     toolbox_c_printf "-------------------------------------\n"
+
+    # Verify essential environment prerequisites, exit on error.
+    toolbox_verify_env_vars IMC_KERNEL_DIR IMC_INFRA_COMMON_LINUX_DIR MEV_INFRA_PATH MEV_LIBS_PATH SDKTARGETSYSROOT
+    if [[ $? -ne 0 ]]; then
+        exit 1
+    fi
 
     # Build and capture the return value.
     build_imc_app

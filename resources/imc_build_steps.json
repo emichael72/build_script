@@ -1,0 +1,112 @@
+{
+    "imc_build_steps": [
+        {
+            "index": 0,
+            "description": "Generate CMake tool-chain file",
+            "work_path": "${ZEPHYR_BASE}",
+            "execute_command": "cmake_generate_toolchain_file",
+            "execute_args": "$toolchain_template_file",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 1,
+            "description": "Configure CMake",
+            "work_path": "${BUILD_ROOT}",
+            "execute_command": "configure_cmake",
+            "execute_args": "",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 2,
+            "description": "Build Zephyr Kernel",
+            "work_path": "${BUILD_ROOT}",
+            "execute_command": "make",
+            "execute_args": "",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 3,
+            "description": "Generating ID",
+            "work_path": "${ZEPHYR_BASE}",
+            "execute_command": "python3",
+            "execute_args": "${IMC_FT_TOOLS_DIR}/ft_id_generator.py --path . -r 4",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 4,
+            "description": "Building MEV Infra lib",
+            "work_path": "${MEV_INFRA_PATH}",
+            "execute_command": "make",
+            "execute_args": "-j $(nproc)",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 5,
+            "description": "Building MEV-TS lib",
+            "work_path": "${MEV_LIBS_PATH}",
+            "execute_command": "make",
+            "execute_args": "-j $(nproc)",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 6,
+            "description": "Building Infra Common lib",
+            "work_path": "${IMC_INFRA_COMMON_LINUX_DIR}",
+            "execute_command": "make",
+            "execute_args": "-j $(nproc)",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 7,
+            "description": "Zephyr clean",
+            "work_path": "${BUILD_ROOT}",
+            "execute_command": "make",
+            "execute_args": "clean",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 8,
+            "description": "Zephyr full CMake build",
+            "work_path": "${BUILD_ROOT}",
+            "execute_command": "cmake",
+            "execute_args": "--build . -j $(nproc)",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 9,
+            "description": "Zephyr link",
+            "work_path": "${BUILD_ROOT}",
+            "execute_command": "make",
+            "execute_args": "-f CMakeFiles/linker.dir/build.make",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 10,
+            "description": "NVM inject Zephyr",
+            "work_path": "",
+            "execute_command": "python3",
+            "execute_args": "$image_inject_script -nvm $source_nvm_file_name -z $compiled_binary_name -o $destination_nvm_file_name",
+            "break_on_error": true,
+            "force_verbose": false
+        },
+        {
+            "index": 11,
+            "description": "Export kernel build configuration",
+            "work_path": "${ZEPHYR_BASE}",
+            "execute_command": "./$export_config_script_name",
+            "execute_args": "$build_path",
+            "break_on_error": true,
+            "force_verbose": false
+        }
+    ]
+}

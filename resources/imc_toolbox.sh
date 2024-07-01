@@ -2,7 +2,7 @@
 # toolbox.sh
 
 # ------------------------------------------------------------------------------
-# Script Name:    tool_box.sh
+# Script Name:    imc_tool_box.sh
 # Description:    IMC bash library routines.
 # Version:        0.1
 # Copyright:      (C) 2018 - 2024 Intel Corporation.
@@ -15,6 +15,8 @@ toolbox_version="0.1" # Helps to keep track of this glory.
 toolbox_allow_debug=0 # Enable / disable the use of 'toolbox_d_printf'
 toolbox_terminal_tmi=0 # If true (1_) the step will dump everything to the terminal
 toolbox_script_base_path=""
+toolbox_steps_manager_script=""
+toolbox_steps_json_file=""
 
 ##
 # @brief Print text with multiple colors in the same line using ANSI color codes.
@@ -176,6 +178,33 @@ toolbox_package_installer() {
 }
 
 ##
+# @brief Safer method to expand a string containing a variable and possibly
+#        quotation marks.
+# @return expanded string
+#
+
+toolbox_expand() {
+
+ local input="$1"
+    local expanded
+
+    # Temporarily replace all escaped quotes with placeholders
+    local single_quote_placeholder="__SQUOTE__"
+    local double_quote_placeholder="__DQUOTE__"
+    local temp="${input//\'/$single_quote_placeholder}"
+    temp="${temp//\"/$double_quote_placeholder}"
+
+    # Expand variables within the string
+    expanded=$(eval "echo \"$temp\"")
+
+    # Restore the escaped quotes
+    expanded="${expanded//$single_quote_placeholder/\'}"
+    expanded="${expanded//$double_quote_placeholder/\"}"
+
+    echo "$expanded"
+}
+
+##
 # @brief print a file size in a nicely formatted way.
 # @return 0 on success
 #
@@ -272,6 +301,59 @@ toolbox_count_word_occurrences() {
 
 
 ##
+# @brief Determine if a given string is a function recognized by Bash.
+# @param[in] func_name the string in question.
+# @return the usual 0 or 1
+#
+
+toolbox_is_bash_function()  {
+
+    local func_name="$1"
+    
+    # Check if the function is defined
+    if declare -F "$func_name" > /dev/null; then
+        return 0  # Function exists
+    else
+        return 1  # Function does not exist
+    fi
+}
+
+
+##
+# @brief Check if multiple environment variables are defined.
+#
+# This function verifies that the specified environment variables are defined.
+# It prints an error message for each missing variable and advises to source 
+# the environment setup script if any variables are missing.
+#
+# @param ... Names of the environment variables to check.
+# @return int 0 if all specified environment variables are defined, 1 if any are missing.
+#
+
+toolbox_verify_env_vars() {
+
+    local missing_vars=()
+    local var_name
+
+    for var_name in "$@"
+    do
+        if [[ -z "${!var_name}" ]]; then
+            missing_vars+=("$var_name")
+        fi
+    done
+
+    if (( ${#missing_vars[@]} > 0 )); then
+        for var_name in "${missing_vars[@]}"; do
+            toolbox_c_printf RED "Error: %s environment variable not defined.\n" "$var_name"
+        done
+        toolbox_c_printf DEFAULT "Make sure to source the environment setup script.\n"
+        return 1
+    fi
+
+    return 0
+}
+
+##
 # @brief Convert a relative path to an absolute path.
 # @param[in] relative_path The relative path to be converted.
 # @return The absolute path corresponding to the given relative path.
@@ -280,10 +362,51 @@ toolbox_count_word_occurrences() {
 toolbox_to_absolute_path() {
 
     local relative_path="$1"
-    local absolute_path  
+    local absolute_path
 
-    # Use readlink to resolve the absolute path
-    absolute_path=$(readlink -f "$relative_path")
+    relative_path=$(toolbox_expand "$1") # Expand any variables we may have 
+
+    # Use readlink to resolve the absolute path, if it's a valid path
+    if [ -e "$relative_path" ]; then
+        absolute_path=$(readlink -f "$relative_path")
+    else
+        toolbox_c_printf RED "Error: " DEFAULT "Invalid path: '$relative_path'.\n"
+        exit 1
+    fi
+
+    echo "$absolute_path"
+}
+
+
+##
+# @brief Similar to toolbox_to_absolute_path() 
+#        Convert a relative path to an absolute path.
+# @param[in] json_file JSON file to parse
+# @param[in] json_element Element within the JSON to look for.
+# @return The absolute path corresponding to the given relative path.
+#
+
+toolbox_json_element_to_absolute_path() {
+
+    local json_file="$1"
+    local json_element="$2"
+    local relative_path
+    local absolute_path
+    local value
+
+    # Extract the value from the JSON file
+    value=$(jq -r --arg element "$json_element" '.[$element]' "$json_file")
+
+    # Expand any environment variables
+    relative_path=$(toolbox_expand "$value")
+
+    # Check if the relative path is valid and resolve the absolute path
+    if [ -e "$relative_path" ]; then
+        absolute_path=$(readlink -f "$relative_path")
+    else
+        toolbox_c_printf RED "Error: " DEFAULT "Invalid path: '$relative_path'.\n"
+        exit 1
+    fi
 
     echo "$absolute_path"
 }
@@ -393,7 +516,7 @@ toolbox_error_handler() {
     # Call the Python script
     toolbox_c_printf "\nCompilation " RED "error" DEFAULT " found in '" CYAN "$bad_source_file_name'" DEFAULT "\n"
     toolbox_c_printf "Requesting AI assistance....\n\n\n"
-    insights=$(/usr/bin/python3 $toolbox_script_base_path/ai_insights.py "$gcc_error_message" "$bad_source_file_content" "$ai_assist_timeout")
+    insights=$(python3 $toolbox_script_base_path/ai_insights.py "$gcc_error_message" "$bad_source_file_content" "$ai_assist_timeout")
     echo "$insights"
 
     return $step_return_value
@@ -498,9 +621,8 @@ toolbox_read_file_to_variable() {
 }
 
 ##
-# @brief Executes a single step based on the provided steps table and return the
+# @brief Executes a single step based on the steps table and return the
 #        executed command return value.
-# @param steps table
 # @param the index of the step to execute.
 # @note This function aims to generate a human-readable console trace.
 #       As a result, it has become more complex than originally intended.
@@ -509,43 +631,80 @@ toolbox_read_file_to_variable() {
 
 toolbox_exec_step() {
 
-    local -n build_steps=$1
-    local index="$2"
+    local index="$1"
     local timestamp
-    local step
     local description
     local command
     local file_name
     local logfile
     local warnings_count="0"
     local initial_message
+    local original_path
+    local is_function
 
-    if [ ${index} -ge ${#steps[@]} ]; then
+    # Check if the index is valid
+    local step_count=$(python ${toolbox_steps_manager_script} "step_get_count('${toolbox_steps_json_file}')")
+    if [ ${index} -ge ${step_count} ]; then
         declare -g toolbox_last_log_file=""
         toolbox_c_printf RED "Error:" DEFAULT "Invalid step.\n"
-        return 0
+        exit 0
     fi
 
-     # Extract the specified step
-    step="${build_steps[$index]}"
+    # Store the current path
+    original_path=$(pwd)
 
-    # Split the step into description and execution string
-    description=$(echo "$step" | cut -d "'" -f 2)
-    command=$(echo "$step" | cut -d "'" -f 4)
+    # Get step details using the provided API
+    description=$(python ${toolbox_steps_manager_script} "get_step_element('${toolbox_steps_json_file}', ${index}, 'description')")
+    command=$(python ${toolbox_steps_manager_script} "get_step_element('${toolbox_steps_json_file}', ${index}, 'execute_command')")
+    local work_path=$(python ${toolbox_steps_manager_script} "get_step_element('${toolbox_steps_json_file}', ${index}, 'work_path')")
+    local args=$(python ${toolbox_steps_manager_script} "get_step_element('${toolbox_steps_json_file}', ${index}, 'execute_args')")
+    local break_on_error=$(python ${toolbox_steps_manager_script} "get_step_element('${toolbox_steps_json_file}', ${index}, 'break_on_error')")
 
-    # Expand the command
-    command=$(eval echo "$command")
+    # Get formatted description for log file name
+    file_name=$(python ${toolbox_steps_manager_script} "step_get_formatted_description('${toolbox_steps_json_file}', ${index})")
 
-    toolbox_d_printf "Command: %s" "$command"
-   
-    # Construct a file name out the step discretion.
-    file_name=$(toolbox_convert_to_lower_underscore "$description")
-
-    # Check if any of the variables are null
-    if [ -z "$description" ] || [ -z "$command" ] || [ -z "$file_name" ]; then
-        toolbox_c_printf RED "Error: " DEFAULT "One or more step input variables are null.\n"
+    # Check if any of the variables are null or equal to "1"
+    if [ -z "$description" ] || [ "$description" == "1" ] || [ -z "$command" ] || [ "$command" == "1" ] || [ "$args" == "1" ] || [ "$work_path" == "1" ] || [ -z "$file_name" ] || [ "$file_name" == "1" ]; then
+        toolbox_c_printf RED "Error: " DEFAULT "One or more step input variables in step " YELLOW ${index} DEFAULT " are null or invalid.\n"
+        toolbox_c_printf "File: " YELLOW "${BASH_SOURCE[0]}" DEFAULT ", Line: ${BASH_LINENO[0]}\n\n"
         exit 1 # Critical: problematic steps table.
     fi
+
+    # Expand any environment variables
+
+    command=$(toolbox_expand "$command")
+    args=$(toolbox_expand "$args")
+    work_path=$(toolbox_expand "$work_path")
+
+    # Debug: determine if the command is a local function or external binary,
+    toolbox_is_bash_function "$command"
+    is_function=$?
+    if [ $is_function -eq 0 ]; then
+        function_status="Function"
+    else
+        function_status="Command"
+    fi
+
+    # 
+    # Combine command and arguments
+    if [ -n "$args" ]; then
+        command="${command} ${args}"
+    fi
+
+    # If 'work_path' was not specified, use current path
+    if [ -z "$work_path" ]; then
+        work_path="$original_path"
+    fi
+  
+    # Switch to the work path if it's not empty and not "1"
+    if [ -n "$work_path" ]; then
+        cd "$work_path" || {
+            toolbox_c_printf RED "Error: " DEFAULT "Failed to switch to work path: $work_path\n"
+            exit 1
+        }
+    fi
+
+    toolbox_d_printf "Command: '%s' from '%s'" "$command" "$work_path"
 
     # Build a time stamp string to be used of the step log file.
     timestamp=$(date +"%d_%m_%Y_%H_%M_%S")
@@ -580,7 +739,7 @@ toolbox_exec_step() {
         eval "$command" &> "$logfile"
         local ret_val=$?
 
-        # Count the times the ward "warning" appeared in the output file.
+        # Count the times the word "warning" appeared in the output file.
         warnings_count=$(toolbox_count_word_occurrences "$logfile" "warning:")
     fi
 
@@ -600,10 +759,19 @@ toolbox_exec_step() {
         fi
     fi
 
+    # Return to the original path if it was changed
+    if [ -n "$work_path" ]; then
+        cd "$original_path" || {
+            toolbox_c_printf RED "Error: " DEFAULT "Failed to return to original path: $original_path\n"
+            exit 1
+        }
+    fi
+
     # Pass on the global step handler
-    if [ "$ret_val" -ne 0 ]; then
+    if [ "$ret_val" -ne 0 ] && [ "$break_on_error" == "true" ]; then
         toolbox_error_handler $index $logfile $ret_val $ai_assisted_error_info $ai_assisted_timeout
     fi
+
 
     return $ret_val
 }
@@ -613,12 +781,16 @@ toolbox_exec_step() {
 # @brief Sets the global options for allow_debug and extensive terminal output.
 # @param[in] allow_debug Boolean flag to allow debug (0 or 1).
 # @param[in] terminal_tmi Boolean flag to allow terminal TMI (0 or 1).
+# @param[in] Steps management script path.
+# @param[in] JSOPN file containing steps.
 # @return 0 or 1.
 
 toolbox_set_options() {
 
     local allow_debug="$1"
     local terminal_tmi="$2"
+    local steps_manager_script="$3"
+    local steps_json_file="$4"
 
     # Validate parameters
     if [[ "$allow_debug" != 0 && "$allow_debug" != 1 ]]; then
@@ -632,6 +804,9 @@ toolbox_set_options() {
     # Set global variables
     toolbox_allow_debug="$allow_debug"
     toolbox_terminal_tmi="$terminal_tmi"
+    toolbox_steps_manager_script=$steps_manager_script
+    toolbox_steps_json_file=$steps_json_file
     toolbox_script_base_path=$(pwd)
+
     return 0
 }
